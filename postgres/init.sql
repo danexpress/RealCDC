@@ -108,3 +108,117 @@ CREATE TABLE IF NOT EXISTS ecommerce.audit_log (
 CREATE INDEX idx_audit_log_table_name ON ecommerce.audit_log (table_name);
 CREATE INDEX idx_audit_log_record_id ON ecommerce.audit_log (record_id);
 CREATE INDEX idx_audit_log_changed_at ON ecommerce.audit_log (changed_at DESC);
+
+
+-- FUNCTION update_timestamp
+CREATE OR REPLACE FUNCTION ecommerce.update_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- TRIGGERS FOR UPDATING updated_at for all tables
+CREATE TRIGGER trg_update_customers_timestamp
+    BEFORE UPDATE ON ecommerce.customers
+    FOR EACH ROW EXECUTE FUNCTION ecommerce.update_timestamp();
+
+CREATE TRIGGER trg_update_products_timestamp
+    BEFORE UPDATE ON ecommerce.products
+    FOR EACH ROW EXECUTE FUNCTION ecommerce.update_timestamp();
+
+CREATE TRIGGER trg_update_orders_timestamp
+    BEFORE UPDATE ON ecommerce.orders
+    FOR EACH ROW EXECUTE FUNCTION ecommerce.update_timestamp();
+
+
+CREATE TRIGGER trg_update_inventory_timestamp
+    BEFORE UPDATE ON ecommerce.inventory
+    FOR EACH ROW EXECUTE FUNCTION ecommerce.update_timestamp();
+
+
+-- FUNCTION: GENERATE ORDER NUMBER
+CREATE OR REPLACE FUNCTION ecommerce.generate_order_number()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.order_number = 'ORD-' || TO_CHAR(NOW(), 'YYYYMMDD') || LPAD(NEXTVAL('order_seq')::text, 6, '0');
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE SEQUENCE ecommerce.order_seq START 1;
+
+-- TRIGGER TO SET ORDER NUMBER BEFORE INSERT
+CREATE TRIGGER trg_generate_order_number
+    BEFORE INSERT ON ecommerce.orders
+    FOR EACH ROW 
+        WHEN (NEW.order_number IS NULL OR NEW.order_number = '') 
+        EXECUTE FUNCTION ecommerce.generate_order_number();
+
+
+INSERT INTO ecommmerce.products (sku, name, description, category, price, cost, weight) VALUES
+('SKU001', 'Wireless Mouse', 'Ergonomic wireless mouse with adjustable DPI.', 'Electronics', 29.99, 15.00, 0.2),
+('SKU002', 'Bluetooth Headphones', 'Over-ear Bluetooth headphones with noise cancellation.', 'Electronics', 89.99, 50.00, 0.5),
+('SKU003', 'Smartphone Stand', 'Adjustable smartphone stand for desk use.', 'Accessories', 19.99, 5.00, 0.1),
+('SKU004', 'USB-C Hub', 'Multi-port USB-C hub with HDMI and USB 3.0 ports.', 'Electronics', 49.99, 25.00, 0.3),
+('SKU005', 'Gaming Keyboard', 'Mechanical gaming keyboard with RGB backlighting.', 'Electronics', 79.99, 40.00, 0.7),
+('SKU006', '4K Monitor', '27-inch 4K UHD monitor with HDR support.', 'Electronics', 399.99, 250.00, 5.0);
+
+INSERT INTO ecommerce.inventory (product_id, quantity, reserved, available, reorder_point, reorder_quantity, warehouse_location) VALUES
+SELECT 
+    id,
+    (RANDOM() * 200 + 50)::INTEGER,
+    (RANDOM() * 10)::INTEGER,
+    CASE (RANDOM() * 3)::INTEGER
+        WHEN 0 THEN 'WAREHOUSE-A'
+        WHEN 1 THEN 'WAREHOUSE-B'
+        ELSE 'WAREHOUSE-C'
+    END,
+    20,
+    100
+FROM ecommerce.products;
+
+INSERT INTO ecommerce.customers (first_name, last_name, email, phone, tier, total_spent) VALUES
+('John', 'Doe', 'john.doe@example.com', '555-1234', 'Gold', 1200.00),
+('Jane', 'Smith', 'jane.smith@example.com', '555-5678', 'Silver', 800.00),
+('Alice', 'Johnson', 'alice.johnson@example.com', '555-8765', 'Platinum', 2000.00),
+('Bob', 'Brown', 'bob.brown@example.com', '555-4321', 'Gold', 1500.00);
+
+-- CDC HEARTBEAT
+CREATE TABLE IF NOT EXISTS ecommerce.cdc_heartbeat (
+    id SERIAL PRIMARY KEY,
+    ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO ecommerce.cdc_heartbeat (ts) VALUES (NOW());
+
+CREATE TABLE ecommerce.debezium_signals (
+    id SERIAL PRIMARY KEY,
+    type VARCHAR(255) NOT NULL,
+    data TEXT
+);
+
+CREATE TABLE ecommerce.cdc_metrics (
+    id BIGSERIAL PRIMARY KEY,
+    table_name VARCHAR(255) NOT NULL,
+    operation VARCHAR(50) NOT NULL check(operation IN ('INSERT', 'UPDATE', 'DELETE')),
+    record_count BIGINT NOT NULL default 1,
+    measured_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_cdc_metrics_table_name ON ecommerce.cdc_metrics (table_name, operation);
+
+CREATE PUBLICATION cdc_publication FOR TABLES
+    ecommerce.customers,
+    ecommerce.products,
+    ecommerce.orders,
+    ecommerce.order_items,
+    ecommerce.inventory,
+    ecommerce.cdc_heartbeat;
+
+
+GRANT USAGE ON SCHEMA ecommerce TO cdc_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA ecommerce TO cdc_user;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ecommerce TO cdc_user;
+GRANT SELECT ON ALL FUNCTIONS IN SCHEMA ecommerce TO cdc_user;
