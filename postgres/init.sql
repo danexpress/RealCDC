@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS ecommerce.products (
 CREATE INDEX idx_products_sku ON ecommerce.products (sku);
 CREATE INDEX idx_products_category ON ecommerce.products (category);
 
--- TABLE orders
+--  orders
 CREATE TABLE IF NOT EXISTS ecommerce.orders (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     order_number VARCHAR(50) UNIQUE NOT NULL,
@@ -57,4 +57,54 @@ CREATE TABLE IF NOT EXISTS ecommerce.orders (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_orders_order_number ON ecommerce.orders (order_number);
 CREATE INDEX idx_orders_customer_id ON ecommerce.orders (customer_id);
+CREATE INDEX idx_orders_status ON ecommerce.orders (status);
+CREATE INDEX idx_orders_created_at ON ecommerce.orders (created_at DESC);
+
+
+-- order_items
+CREATE TABLE IF NOT EXISTS ecommerce.order_items (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id UUID NOT NULL REFERENCES ecommerce.orders (id) ON DELETE CASCADE,
+    product_id UUID NOT NULL REFERENCES ecommerce.products (id),
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    unit_price NUMERIC(10, 2) NOT NULL CHECK (unit_price >= 0),
+    total_price NUMERIC(10, 2) NOT NULL CHECK (total_price >= 0),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_order_items_order_id ON ecommerce.order_items (order_id);
+CREATE INDEX idx_order_items_product_id ON ecommerce.order_items (product_id);
+
+-- TABLE inventory
+CREATE TABLE IF NOT EXISTS ecommerce.inventory (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    product_id UUID NOT NULL REFERENCES ecommerce.products (id) ,
+    quantity INTEGER NOT NULL CHECK (quantity >= 0),
+    reserved INTEGER NOT NULL DEFAULT 0 CHECK (reserved >= 0),
+    available INTEGER NOT NULL DEFAULT 0 CHECK (available >= 0),
+    reorder_point INTEGER NOT NULL DEFAULT 0 CHECK (reorder_point >= 0),
+    reorder_quantity INTEGER NOT NULL DEFAULT 0 CHECK (reorder_quantity >= 0),
+    warehouse_location VARCHAR(100),
+    last_updated TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_inventory_product_id ON ecommerce.inventory (product_id); 
+
+-- audit_log
+CREATE TABLE IF NOT EXISTS ecommerce.audit_log (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    table_name VARCHAR(100) NOT NULL,
+    record_id UUID NOT NULL,
+    action VARCHAR(50) NOT NULL CHECK (action IN ('INSERT', 'UPDATE', 'DELETE')),
+    old_values JSONB,
+    new_values JSONB,
+    changed_by VARCHAR(100) DEFAULT CURRENT_USER,
+    changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_audit_log_table_name ON ecommerce.audit_log (table_name);
+CREATE INDEX idx_audit_log_record_id ON ecommerce.audit_log (record_id);
+CREATE INDEX idx_audit_log_changed_at ON ecommerce.audit_log (changed_at DESC);
