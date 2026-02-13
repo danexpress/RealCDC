@@ -222,3 +222,65 @@ GRANT USAGE ON SCHEMA ecommerce TO cdc_user;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA ecommerce TO cdc_user;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ecommerce TO cdc_user;
 GRANT SELECT ON ALL FUNCTIONS IN SCHEMA ecommerce TO cdc_user;
+
+ALTER USER cdc_user WITH REPLICATION;
+
+CREATE OR REPLACE VIEW ecommerce.dashboard_metrics AS
+SELECT    
+    (SELECT COUNT(*) FROM ecommerce.customers WHERE is_active = true) AS active_customers,
+    (SELECT COUNT(*) FROM ecommerce.products WHERE is_available = true) AS available_products,
+    (SELECT COUNT(*) FROM ecommerce.orders WHERE created_at >= CURRENT_DATE) AS orders_today,
+    (SELECT COALESCE(SUM(total), 0) FROM ecommerce.orders WHERE created_at >= CURRENT_DATE) AS revenue_today,
+    (SELECT COUNT(*) FROM ecommerce.inventory WHERE available <= reorder_point) AS low_stock_items;
+
+GRANT SELECT ON ecommerce.dashboard_metrics TO cdc_user;
+
+CREATE OR REPLACE VIEW ecommerce.cdc_replication_status AS
+SELECT 
+    slot_name,
+    active,
+    restart_lsn,
+    confirmed_flush_lsn,
+    pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS lag_size,
+    EXTRACT(EPOCH FROM (NOW() - (pg_last_xact_replay_timestamp()))) AS lag_seconds
+FROM pg_replication_slots
+WHERE slot_name LIKE 'debezium%';
+
+CREATE OR REPLACE FUNCTION ecommerce.get_table_counts()
+RETURNS TABLE (
+    table_name TEXT,
+    row_count BIGINT,
+    last_updated TIMESTAMP WITH TIME ZONE
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 'customers'::TEXT, COUNT(*)::BIGINT, MAX(updated_at) FROM ecommerce.customers
+    UNION ALL
+    SELECT 'products'::TEXT, COUNT(*)::BIGINT, MAX(updated_at) FROM ecommerce.products
+    UNION ALL
+    SELECT 'orders'::TEXT, COUNT(*)::BIGINT, MAX(updated_at) FROM ecommerce.orders
+    UNION ALL
+    SELECT 'order_items'::TEXT, COUNT(*)::BIGINT, MAX(updated_at) FROM ecommerce.order_items
+    UNION ALL
+    SELECT 'inventory'::TEXT, COUNT(*)::BIGINT, MAX(updated_at) FROM ecommerce.inventory;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION ecommerce.track_cdc_event()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO ecommerce.cdc_metrics (table_name, operation)
+    VALUES (TG_TABLE_NAME, TG_OP);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Add tracking triggers (after trigger, would not affect CDC)
+CREATE TRIGGER trg_track_customer_cdc AFTER INSERT OR UPDATE OR DELETE ON ecommerce.customers
+    FOR EACH ROW EXECUTE FUNCTION ecommerce.track_cdc_event();
+CREATE TRIGGER trg_track_product_cdc AFTER INSERT OR UPDATE OR DELETE ON ecommerce.products
+    FOR EACH ROW EXECUTE FUNCTION ecommerce.track_cdc_event();
+CREATE TRIGGER trg_track_order_cdc AFTER INSERT OR UPDATE OR DELETE ON ecommerce.orders
+    FOR EACH ROW EXECUTE FUNCTION ecommerce.track_cdc_event();
+CREATE TRIGGER trg_track_inventory_cdc AFTER INSERT OR UPDATE OR DELETE ON ecommerce.inventory
+    FOR EACH ROW EXECUTE FUNCTION ecommerce.track_cdc_event();
