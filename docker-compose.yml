@@ -125,6 +125,28 @@ services:
     networks:
       - cridix
     restart: unless-stopped
+
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: cdc-dashboard
+    hostname: dashboard
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./dashboard:/app
+      - /app/node_modules
+    networks:
+      - cridix
+    restart: unless-stopped
     
 
 volumes:
