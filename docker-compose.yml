@@ -103,11 +103,34 @@ services:
       - "8080:8080"
     networks:
       - cridix
+
+  cdc-consumer:
+    build:
+      context: ./consumer
+      dockerfile: Dockerfile
+    container_name: cdc-consumer
+    hostname: cdc-consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      debezium:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_GROUP_ID: cdc-consumer-group
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - ./consumer:/app
+      - consumer_logs:/app/logs
+    networks:
+      - cridix
+    restart: unless-stopped
     
 
 volumes:
   postgres_data:
   kafka_data:
+  consumer_logs:
 
 networks:
   cridix:
