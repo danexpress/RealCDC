@@ -2,6 +2,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: cdc-postgres
+    hostname: postgres
     environment:
       POSTGRES_USER: cdc_user
       POSTGRES_PASSWORD: cdc_password
@@ -9,24 +10,24 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql
       - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf
       - postgres_data:/var/lib/postgresql/data
-    command: "postgres -c config_file=/etc/postgresql/postgresql.conf"
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c hba_file=/etc/postgresql/pg_hba.conf
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U cdc_user -d enterprise_db"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - cridix
-
   kafka:
     image: confluentinc/cp-kafka:7.6.1
     container_name: cdc-kafka
     hostname: kafka
     environment:
-      KAFKA_PROCESS_ROLES: broker, controller
+      KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_NODE_ID: 1
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:29092
@@ -34,21 +35,21 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_OFFSET_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      CLUSTER_ID: MkU30EVBNTcwNTJENDM2QK
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
     ports:
       - "29092:29092"
-      - "9094:9094"
+      - "9092:9092"
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
       interval: 10s
-      timeout: 5s
+      timeout: 10s
       retries: 10
     networks:
       - cridix
@@ -67,10 +68,10 @@ services:
       GROUP_ID: debezium-cluster
       CONFIG_STORAGE_TOPIC: debezium_configs
       OFFSET_STORAGE_TOPIC: debezium_offsets
-      STATUS_STORAGE_TOPIC: debezium_status
+      STATUS_STORAGE_TOPIC: debezium_statuses
       CONFIG_STORAGE_REPLICATION_FACTOR: 1
-      OFFSET_CONFIG_REPLICATION_FACTOR: 1
-      STATUS_CONFIG_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
       KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
@@ -84,7 +85,7 @@ services:
       retries: 10
     networks:
       - cridix
-  
+
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: cdc-kafka-ui
@@ -94,7 +95,7 @@ services:
         condition: service_healthy
     environment:
       KAFKA_CLUSTERS_0_NAME: cdc-cluster
-      KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
       KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: debezium
       KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://debezium:8083
       DYNAMIC_CONFIG_ENABLED: "true"
@@ -102,6 +103,7 @@ services:
       - "8080:8080"
     networks:
       - cridix
+    
 
 volumes:
   postgres_data:
